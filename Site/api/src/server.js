@@ -52,11 +52,23 @@ function bridgeAuthorized(request) {
 }
 
 function publicPlayer(user) {
-  return { id: user.id, nick: user.nick, ...user.profile }
+  return { id: user.id, nick: user.nick, minecraftUuid: user.minecraftUuid ?? null, ...user.profile }
 }
 function adminPlayer(user) {
   const profile = user.profile ?? {}
-  return { id: user.id, nick: user.nick, minecraftUuid: user.minecraftUuid ?? null, online: Boolean(profile.online), lastLoginAt: profile.lastLoginAt ?? null, lastLogoutAt: profile.lastLogoutAt ?? null, lastLocation: profile.lastLocation ?? null, level: profile.level ?? 0, money: profile.money ?? 0, vip: profile.vip ?? null, claims: profile.claims ?? 0, mutedUntil: profile.mutedUntil ?? null, warnings: profile.warnings ?? 0 }
+  return {
+    id: user.id, nick: user.nick, minecraftUuid: user.minecraftUuid ?? null,
+    online: profile.online === true, lastLoginAt: profile.lastLoginAt ?? null,
+    lastLogoutAt: profile.lastLogoutAt ?? null, lastSyncAt: profile.lastSyncAt ?? null,
+    lastLocation: profile.lastLocation ?? null, level: profile.level ?? 0,
+    experience: profile.experience ?? 0, experienceNextLevel: profile.experienceNextLevel ?? 0,
+    inventory: Array.isArray(profile.inventory) ? profile.inventory : [],
+    homes: Array.isArray(profile.homes) ? profile.homes : [],
+    money: Number.isFinite(profile.money) ? profile.money : null,
+    vip: profile.vip ?? null, vipExpiresAt: profile.vipExpiresAt ?? null,
+    claims: Number.isFinite(profile.claims) ? profile.claims : null,
+    mutedUntil: profile.mutedUntil ?? null, warnings: Number.isFinite(profile.warnings) ? profile.warnings : 0
+  }
 }
 
 function validPassword(password, stored) {
@@ -95,7 +107,7 @@ function adminSessionFrom(request) { const auth = request.headers.authorization;
 createServer(async (request, response) => {
   try {
     if (request.method === 'OPTIONS') {
-      response.writeHead(204, { 'Access-Control-Allow-Origin': process.env.WEB_ORIGIN || '*', 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Nexoria-Plugin-Key', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS' })
+      response.writeHead(204, { 'Access-Control-Allow-Origin': process.env.WEB_ORIGIN || '*', 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Nexoria-Plugin-Key, X-Nexoria-Bridge-Key', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS' })
       return response.end()
     }
     if (request.method === 'POST' && request.url === '/api/auth/login') {
@@ -134,11 +146,26 @@ createServer(async (request, response) => {
       const snapshot = await bodyFrom(request)
       if (!/^[0-9a-f-]{36}$/i.test(String(snapshot.uuid ?? '')) || !/^[A-Za-z0-9_]{3,16}$/.test(String(snapshot.nick ?? ''))) return json(response, 400, { message: 'Snapshot inválido.' })
       const users = await loadUsers()
-      const user = users.find(item => item.minecraftUuid === snapshot.uuid || item.nick.toLowerCase() === snapshot.nick.toLowerCase())
-      if (!user) return json(response, 202, { synced: false, message: 'Jogador ainda não possui conta no site.' })
+      const uuid = String(snapshot.uuid).toLowerCase()
+      // UUID é a identidade principal. Só associa pelo nick quando a conta ainda não
+      // tem UUID vinculado; nunca sobrescreve uma conta vinculada a outro UUID.
+      let user = users.find(item => String(item.minecraftUuid ?? '').toLowerCase() === uuid)
+      if (!user) user = users.find(item => !item.minecraftUuid && item.nick.toLowerCase() === snapshot.nick.toLowerCase())
+      if (!user) return json(response, 202, { synced: false, message: 'Jogador ainda não possui conta vinculada a este UUID no site.' })
       user.minecraftUuid = snapshot.uuid
       user.nick = snapshot.nick
-      user.profile = { ...user.profile, online: Boolean(snapshot.online), lastLoginAt: snapshot.lastLoginAt ?? user.profile.lastLoginAt, lastLogoutAt: snapshot.lastLogoutAt ?? user.profile.lastLogoutAt, lastLocation: snapshot.lastLocation ?? user.profile.lastLocation, level: Number.isFinite(snapshot.level) ? snapshot.level : user.profile.level, experience: Number.isFinite(snapshot.experience) ? snapshot.experience : user.profile.experience, experienceNextLevel: Number.isFinite(snapshot.experienceNextLevel) ? snapshot.experienceNextLevel : user.profile.experienceNextLevel, inventory: Array.isArray(snapshot.inventory) ? snapshot.inventory.slice(0, 36) : user.profile.inventory, homes: Array.isArray(snapshot.homes) ? snapshot.homes.slice(0, 20) : user.profile.homes, money: Number.isFinite(snapshot.money) ? snapshot.money : user.profile.money, vip: typeof snapshot.vip === 'string' ? snapshot.vip : user.profile.vip, claims: Number.isFinite(snapshot.claims) ? snapshot.claims : user.profile.claims }
+      const previous = user.profile ?? {}
+      const profile = { ...previous, online: typeof snapshot.online === 'boolean' ? snapshot.online : previous.online }
+      for (const field of ['lastLoginAt', 'lastLogoutAt', 'lastLocation', 'vip', 'vipExpiresAt', 'mutedUntil']) {
+        if (snapshot[field] !== undefined && snapshot[field] !== null) profile[field] = snapshot[field]
+      }
+      for (const field of ['level', 'experience', 'experienceNextLevel', 'money', 'claims', 'warnings']) {
+        if (Number.isFinite(snapshot[field])) profile[field] = snapshot[field]
+      }
+      if (Array.isArray(snapshot.inventory)) profile.inventory = snapshot.inventory.slice(0, 36)
+      if (Array.isArray(snapshot.homes)) profile.homes = snapshot.homes.slice(0, 20)
+      profile.lastSyncAt = new Date().toISOString()
+      user.profile = profile
       await saveUsers(users)
       return json(response, 200, { synced: true })
     }
@@ -150,10 +177,14 @@ createServer(async (request, response) => {
     const completedAction = request.url?.match(/^\/api\/plugin\/bridge\/actions\/([a-zA-Z0-9_-]+)\/complete$/)
     if (request.method === 'POST' && completedAction) {
       if (!bridgeAuthorized(request)) return json(response, 403, { message: 'Bridge não autorizado.' })
-      const { result = 'executed' } = await bodyFrom(request)
+      const { result = 'executed', message = '' } = await bodyFrom(request)
+      if (!['executed', 'failed'].includes(result)) return json(response, 400, { message: 'Resultado de ação inválido.' })
       const actions = await loadActions(); const action = actions.find(item => item.id === completedAction[1])
       if (!action) return json(response, 404, { message: 'Ação não encontrada.' })
-      action.status = result === 'executed' ? 'executed' : 'failed'; action.completedAt = new Date().toISOString(); await saveActions(actions)
+      action.status = result
+      action.resultMessage = String(message).slice(0, 240)
+      action.completedAt = new Date().toISOString()
+      await saveActions(actions)
       return json(response, 200, { ok: true })
     }
     if (request.method === 'POST' && request.url === '/api/admin/auth/request-code') {
@@ -225,7 +256,8 @@ createServer(async (request, response) => {
       if (!['ban', 'kick', 'mute', 'warn'].includes(type)) return json(response, 400, { message: 'Ação inválida.' })
       const users = await loadUsers(); const user = users.find(item => item.id === decodeURIComponent(playerAction[1]))
       if (!user) return json(response, 404, { message: 'Jogador não encontrado.' })
-      const action = { id: randomBytes(12).toString('base64url'), playerId: user.id, minecraftUuid: user.minecraftUuid ?? null, nick: user.nick, type, reason: String(reason).slice(0, 240), status: 'pending', requestedBy: session.nick, createdAt: new Date().toISOString() }
+      if (!user.minecraftUuid) return json(response, 409, { message: 'Este jogador ainda não está vinculado a um UUID do Minecraft. Nenhuma ação foi enfileirada.' })
+      const action = { id: randomBytes(12).toString('base64url'), playerId: user.id, minecraftUuid: user.minecraftUuid, nick: user.nick, type, reason: String(reason).slice(0, 240), status: 'pending', requestedBy: session.nick, createdAt: new Date().toISOString() }
       const actions = await loadActions(); actions.push(action); await saveActions(actions)
       return json(response, 202, { action })
     }
@@ -242,7 +274,9 @@ createServer(async (request, response) => {
       return jsonWithCookie(response, 200, { message: 'Sessão encerrada.' }, clearCookie('abyssal_admin'))
     }
     if (request.method === 'GET' && request.url === '/health') {
-      return json(response, 200, { status: 'ok', uptime: process.uptime() })
+      const users = await loadUsers()
+      const synced = users.map(user => user.profile?.lastSyncAt).filter(Boolean).sort().at(-1) ?? null
+      return json(response, 200, { status: 'ok', uptime: process.uptime(), bridge: { lastSyncAt: synced, linkedPlayers: users.filter(user => user.minecraftUuid).length } })
     }
     json(response, 404, { message: 'Rota não encontrada.' })
   } catch {

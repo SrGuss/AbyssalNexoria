@@ -77,6 +77,17 @@ function App() {
     return () => window.removeEventListener('hashchange', syncPage)
   }, [])
 
+  useEffect(() => {
+    if (!player?.id || page !== 'account') return
+    let active = true
+    const refresh = () => fetch(api('/api/player/me'), { credentials: 'include' })
+      .then(response => response.ok ? response.json() : Promise.reject(new Error('Sessão expirada')))
+      .then(data => { if (active) setPlayer(data.player) })
+      .catch(() => { if (active) setPlayer(null) })
+    const timer = window.setInterval(refresh, 15000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [player?.id, page])
+
   async function copyIp() {
     try {
       await navigator.clipboard.writeText(SERVER_IP)
@@ -278,16 +289,16 @@ function PlayerPanel({ player }) {
   const date = value => value ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : 'Sem dados'
   const location = player.lastLocation || { world: '—', x: '—', y: '—', z: '—' }
   const inventory = Array.isArray(player.inventory) ? player.inventory : []
-  const homes = Array.isArray(player.homes) ? player.homes : []
+  const homes = Array.isArray(player.homes) ? player.homes.map(home => typeof home === 'string' ? home : home?.name || home?.homeName || home?.id).filter(Boolean) : []
   return <section className="account-area section-wrap" id="conta">
     <div className="account-heading"><div><div className="section-kicker"><span>SEU PERFIL · SINCRONIZADO PELO SERVIDOR</span></div><h2>Olá, <span>{player.nick}</span>.</h2></div><div className="profile-badges"><span className={player.online ? 'online-badge' : 'offline-badge'}><i />{player.online ? 'Online no servidor' : 'Offline'}</span><span className="vip-badge"><Crown size={15} /> {player.vip || 'Sem VIP'}</span></div></div>
     <div className="account-grid">
-      <article className="profile-card"><span className="profile-avatar">{player.nick.slice(0, 1)}</span><strong>{player.nick}</strong><small>Nível {player.level || 0}</small><div className="xp"><span><BarChart3 size={14} /> {(player.experience || 0).toLocaleString('pt-BR')} / {(player.experienceNextLevel || 0).toLocaleString('pt-BR')} XP</span><i><b style={{ width: `${percent}%` }} /></i></div></article>
+      <article className="profile-card"><span className="profile-avatar">{player.nick.slice(0, 1)}</span><strong>{player.nick}</strong><small>Nível {player.level || 0} · Sincronizado: {player.lastSyncAt ? new Intl.DateTimeFormat('pt-BR', { timeStyle: 'short' }).format(new Date(player.lastSyncAt)) : 'aguardando Bridge'}</small><div className="xp"><span><BarChart3 size={14} /> {(player.experience || 0).toLocaleString('pt-BR')} / {(player.experienceNextLevel || 0).toLocaleString('pt-BR')} XP</span><i><b style={{ width: `${percent}%` }} /></i></div></article>
       <article className="stat-card"><Coins /><span>Saldo</span><strong>{(player.money || 0).toLocaleString('pt-BR')} moedas</strong></article>
       <article className="stat-card"><Clock3 /><span>Último login</span><strong>{date(player.lastLoginAt)}</strong></article>
       <article className="stat-card"><MapPin /><span>Última localização</span><strong>{location.world} · {location.x}, {location.y}, {location.z}</strong></article>
       <article className="details-card"><Home /><div><span>Homes salvas</span><p>{homes.length ? homes.join(' · ') : 'Nenhuma home sincronizada.'}</p></div></article>
-      <article className="details-card"><Shield /><div><span>Proteções</span><p>{player.claims || 0} claims registradas no servidor.</p></div></article>
+      <article className="details-card"><Shield /><div><span>Proteções</span><p>{Number.isFinite(player.claims) ? `${player.claims} claims registradas no servidor.` : 'Integração de proteções ainda não disponibilizada pelo Bridge.'}</p></div></article>
       <article className="inventory-card"><div className="inventory-title"><Backpack /><div><span>Inventário</span><small>Dados sincronizados pelo NexoriaBridge</small></div></div><div className="minecraft-inventory">{Array.from({ length: 27 }, (_, slot) => <InventorySlot key={slot} item={inventory.find(item => item.slot === slot)} />)}</div></article>
     </div>
   </section>
@@ -347,12 +358,104 @@ function AdminCreation() {
 }
 
 function PlayerManagement() {
-  const [players, setPlayers] = useState([]); const [actions, setActions] = useState([]); const [notice, setNotice] = useState('Carregando jogadores…')
-  const load = () => fetch(api('/api/admin/players'), { credentials: 'include' }).then(response => response.ok ? response.json() : Promise.reject()).then(data => { setPlayers(data.players); setActions(data.actions || []); setNotice(data.players.length ? '' : 'Nenhum jogador sincronizado ainda.') }).catch(() => setNotice('Não foi possível carregar os jogadores.'))
-  useEffect(() => { load() }, [])
-  async function action(player, type) { const reason = window.prompt(`Motivo para ${type} em ${player.nick}:`); if (reason === null) return; const response = await fetch(api(`/api/admin/players/${encodeURIComponent(player.id)}/actions`), { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, reason }) }); const data = await response.json(); if (response.ok) { setNotice(`Ação ${type} enviada para ${player.nick}.`); load() } else setNotice(data.message) }
+  const [players, setPlayers] = useState([])
+  const [actions, setActions] = useState([])
+  const [notice, setNotice] = useState('Carregando jogadores do NexoriaBridge…')
+  const [query, setQuery] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [busyAction, setBusyAction] = useState('')
+  const [lastUpdated, setLastUpdated] = useState(null)
+
+  async function load(silent = false) {
+    if (!silent) setLoading(true)
+    try {
+      const response = await fetch(api('/api/admin/players'), { credentials: 'include' })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.message || 'Não foi possível carregar os jogadores.')
+      setPlayers(Array.isArray(data.players) ? data.players : [])
+      setActions(Array.isArray(data.actions) ? data.actions : [])
+      setLastUpdated(new Date())
+      setNotice(data.players?.length ? '' : 'Nenhuma conta vinculada ao NexoriaBridge. O jogador precisa ter uma conta no site vinculada ao UUID do Minecraft.')
+    } catch (issue) {
+      setNotice(issue.message || 'Falha ao consultar a API.')
+    } finally {
+      if (!silent) setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    load()
+    const timer = window.setInterval(() => load(true), 15000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  async function action(player, type) {
+    const reason = window.prompt(`Motivo para ${type} em ${player.nick}:`)
+    if (reason === null) return
+    const key = `${player.id}:${type}`
+    setBusyAction(key)
+    try {
+      const response = await fetch(api(`/api/admin/players/${encodeURIComponent(player.id)}/actions`), {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, reason })
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.message || 'Não foi possível solicitar a ação.')
+      setNotice(`Ação ${type} enfileirada para ${player.nick}. Ela só será concluída quando o NexoriaBridge confirmar a execução.`)
+      await load(true)
+    } catch (issue) {
+      setNotice(issue.message || 'Falha ao enviar a ação para a API.')
+    } finally {
+      setBusyAction('')
+    }
+  }
+
   const online = players.filter(player => player.online).length
-  return <section className="player-management"><div className="management-head"><div><div className="section-kicker"><span>JOGADORES DO SERVIDOR · NEXORIABRIDGE</span></div><h2>Controle em tempo real</h2></div><button className="refresh-button" onClick={load}>Atualizar</button></div><div className="admin-stats bridge-stats"><article><strong>{online}</strong><span>Jogadores online</span></article><article><strong>{players.length}</strong><span>Contas sincronizadas</span></article><article><strong>{actions.length}</strong><span>Ações aguardando servidor</span></article></div>{notice && <p className="management-notice">{notice}</p>}<div className="player-table">{players.map(player => <article key={player.id}><div><strong><i className={player.online ? 'online-dot' : ''} />{player.nick}</strong><small>{player.online ? `Online · ${player.lastLocation?.world || 'mundo desconhecido'}` : `Último login: ${player.lastLoginAt ? new Date(player.lastLoginAt).toLocaleString('pt-BR') : 'sem dados'}`}</small></div><span>Nível {player.level}</span><span>{player.money?.toLocaleString('pt-BR') || 0} moedas</span><span>{player.vip || 'Sem VIP'}</span><div className="moderation-actions"><button title="Kick" onClick={() => action(player, 'kick')}><UserX size={14} /></button><button title="Silenciar" onClick={() => action(player, 'mute')}><VolumeX size={14} /></button><button title="Advertir" onClick={() => action(player, 'warn')}><MessageSquare size={14} /></button><button className="danger" title="Banir" onClick={() => action(player, 'ban')}><Ban size={14} /></button></div></article>)}</div></section>
+  const filteredPlayers = players.filter(player => `${player.nick} ${player.minecraftUuid || ''}`.toLowerCase().includes(query.trim().toLowerCase()))
+  const date = value => value ? new Date(value).toLocaleString('pt-BR') : 'Sem registro'
+  const money = value => Number.isFinite(value) ? `${value.toLocaleString('pt-BR')} moedas` : 'Não sincronizado'
+
+  return <section className="player-management">
+    <div className="management-head">
+      <div><div className="section-kicker"><span>JOGADORES DO SERVIDOR · NEXORIABRIDGE</span></div><h2>Controle de jogadores</h2><p>Dados recebidos da API e ações executadas pelo plugin autenticado.</p></div>
+      <button className="refresh-button" onClick={() => load()} disabled={loading}>{loading ? 'Atualizando…' : 'Atualizar dados'}</button>
+    </div>
+    <div className="admin-stats bridge-stats">
+      <article><strong>{online}</strong><span>Jogadores online</span></article>
+      <article><strong>{players.length}</strong><span>Contas vinculadas</span></article>
+      <article><strong>{actions.length}</strong><span>Ações aguardando Bridge</span></article>
+    </div>
+    <div className="management-toolbar">
+      <input aria-label="Buscar jogador" value={query} onChange={event => setQuery(event.target.value)} placeholder="Buscar por nickname ou UUID…" />
+      <small>{lastUpdated ? `Atualizado ${lastUpdated.toLocaleTimeString('pt-BR')}` : 'Aguardando primeira consulta'}</small>
+    </div>
+    {notice && <p className="management-notice">{notice}</p>}
+    {actions.length > 0 && <div className="pending-actions"><strong>Ações pendentes</strong>{actions.map(item => <p key={item.id}><span>{item.type.toUpperCase()}</span> · {item.nick} · solicitada por {item.requestedBy} · {date(item.createdAt)}</p>)}</div>}
+    <div className="player-table">
+      {filteredPlayers.map(player => <article key={player.id}>
+        <div className="player-main">
+          <strong><i className={player.online ? 'online-dot' : ''} />{player.nick}</strong>
+          <small>{player.online ? `Online · ${player.lastLocation?.world || 'mundo não informado'}` : `Último login: ${date(player.lastLoginAt)}`}</small>
+          <small>UUID: {player.minecraftUuid || 'Não vinculado'}</small>
+        </div>
+        <div className="player-bridge-details">
+          <span>Nível {player.level ?? 0} · {(player.experience ?? 0).toLocaleString('pt-BR')} XP</span>
+          <span>Saldo: {money(player.money)}</span>
+          <span>VIP: {player.vip || 'Sem VIP sincronizado'}</span>
+          <span>Claims: {Number.isFinite(player.claims) ? player.claims : 'Não integrado'} · Avisos: {player.warnings ?? 0}</span>
+          <small>Última sincronização: {date(player.lastSyncAt)}</small>
+        </div>
+        <div className="moderation-actions">
+          <button title="Expulsar (kick)" aria-label={`Expulsar ${player.nick}`} disabled={!!busyAction || !player.minecraftUuid} onClick={() => action(player, 'kick')}><UserX size={14} /></button>
+          <button title="Silenciar (mute)" aria-label={`Silenciar ${player.nick}`} disabled={!!busyAction || !player.minecraftUuid} onClick={() => action(player, 'mute')}><VolumeX size={14} /></button>
+          <button title="Advertir (warn)" aria-label={`Advertir ${player.nick}`} disabled={!!busyAction || !player.minecraftUuid} onClick={() => action(player, 'warn')}><MessageSquare size={14} /></button>
+          <button className="danger" title="Banir" aria-label={`Banir ${player.nick}`} disabled={!!busyAction || !player.minecraftUuid} onClick={() => action(player, 'ban')}><Ban size={14} /></button>
+        </div>
+      </article>)}
+      {!filteredPlayers.length && !notice && <p className="management-notice">Nenhum jogador corresponde à busca.</p>}
+    </div>
+  </section>
 }
 
 export default App
