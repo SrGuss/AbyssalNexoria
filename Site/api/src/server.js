@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 const usersPath = fileURLToPath(new URL('../data/users.json', import.meta.url))
 const adminsPath = fileURLToPath(new URL('../data/admins.json', import.meta.url))
+const actionsPath = fileURLToPath(new URL('../data/admin-actions.json', import.meta.url))
 const sessions = new Map()
 const adminChallenges = new Map()
 const adminSessions = new Map()
@@ -15,6 +16,8 @@ async function loadUsers() {
 async function saveUsers(users) { await writeFile(usersPath, `${JSON.stringify(users, null, 2)}\n`) }
 async function loadAdmins() { return JSON.parse(await readFile(adminsPath, 'utf8')) }
 async function saveAdmins(admins) { await writeFile(adminsPath, `${JSON.stringify(admins, null, 2)}\n`) }
+async function loadActions() { try { return JSON.parse(await readFile(actionsPath, 'utf8')) } catch { return [] } }
+async function saveActions(actions) { await writeFile(actionsPath, `${JSON.stringify(actions, null, 2)}\n`) }
 
 function json(response, status, payload) {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': process.env.WEB_ORIGIN || '*', 'Access-Control-Allow-Credentials': 'true' })
@@ -42,9 +45,18 @@ function pluginAuthorized(request) {
   const expected = process.env.PLUGIN_LOGIN_KEY
   return Boolean(expected) && typeof key === 'string' && key.length === expected.length && timingSafeEqual(Buffer.from(key), Buffer.from(expected))
 }
+function bridgeAuthorized(request) {
+  const key = request.headers['x-nexoria-bridge-key']
+  const expected = process.env.PLUGIN_BRIDGE_KEY
+  return Boolean(expected) && typeof key === 'string' && key.length === expected.length && timingSafeEqual(Buffer.from(key), Buffer.from(expected))
+}
 
 function publicPlayer(user) {
   return { id: user.id, nick: user.nick, ...user.profile }
+}
+function adminPlayer(user) {
+  const profile = user.profile ?? {}
+  return { id: user.id, nick: user.nick, minecraftUuid: user.minecraftUuid ?? null, online: Boolean(profile.online), lastLoginAt: profile.lastLoginAt ?? null, lastLogoutAt: profile.lastLogoutAt ?? null, lastLocation: profile.lastLocation ?? null, level: profile.level ?? 0, money: profile.money ?? 0, vip: profile.vip ?? null, claims: profile.claims ?? 0, mutedUntil: profile.mutedUntil ?? null, warnings: profile.warnings ?? 0 }
 }
 
 function validPassword(password, stored) {
@@ -74,7 +86,7 @@ function configuredOwner() {
 
 function sendWhatsAppTwoFactorCode(whatsapp, code) {
   // Adaptador temporário: conecte aqui o futuro bot/provedor de WhatsApp.
-  if (process.env.NODE_ENV !== 'production') console.log(`[2FA WhatsApp desenvolvimento] Código para ${whatsapp}: ${code}`)
+  console.log(`[2FA WhatsApp] Código para ${whatsapp}: ${code}`)
 }
 function hashPassword(password) { const salt = randomBytes(16).toString('hex'); return { algorithm: 'pbkdf2-sha256', iterations: 310000, salt, hash: pbkdf2Sync(password, salt, 310000, 32, 'sha256').toString('hex') } }
 function temporaryPassword() { return randomBytes(9).toString('base64url') }
@@ -82,13 +94,9 @@ function adminSessionFrom(request) { const auth = request.headers.authorization;
 
 createServer(async (request, response) => {
   try {
-    console.log(`[HTTP] ${request.method} ${request.url}`)
     if (request.method === 'OPTIONS') {
       response.writeHead(204, { 'Access-Control-Allow-Origin': process.env.WEB_ORIGIN || '*', 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Nexoria-Plugin-Key', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS' })
       return response.end()
-    }
-    if (request.method === 'GET' && (request.url === '/health' || request.url === '/api/health' || request.url === '/')) {
-      return json(response, 200, { ok: true, status: 'online', service: 'abyssal-nexoria-api', version: '0.1.0', timestamp: new Date().toISOString() })
     }
     if (request.method === 'POST' && request.url === '/api/auth/login') {
       const { nick, password } = await bodyFrom(request)
@@ -120,6 +128,33 @@ createServer(async (request, response) => {
       const user = { id: `player-${uuid}`, nick: cleanNick, minecraftUuid: uuid, password: hashPassword(password), temporaryPassword: false, profile: { level: 1, experience: 0, experienceNextLevel: 100, money: 0, vip: null, vipExpiresAt: null, lastLoginAt: new Date().toISOString(), lastLogoutAt: null, lastLocation: { world: 'world', x: 0, y: 64, z: 0 }, homes: [], inventory: [] } }
       users.push(user); await saveUsers(users)
       return json(response, 201, { ok: true, player: { id: user.id, nick: user.nick } })
+    }
+    if (request.method === 'POST' && request.url === '/api/plugin/bridge/sync') {
+      if (!bridgeAuthorized(request)) return json(response, 403, { message: 'Bridge não autorizado.' })
+      const snapshot = await bodyFrom(request)
+      if (!/^[0-9a-f-]{36}$/i.test(String(snapshot.uuid ?? '')) || !/^[A-Za-z0-9_]{3,16}$/.test(String(snapshot.nick ?? ''))) return json(response, 400, { message: 'Snapshot inválido.' })
+      const users = await loadUsers()
+      const user = users.find(item => item.minecraftUuid === snapshot.uuid || item.nick.toLowerCase() === snapshot.nick.toLowerCase())
+      if (!user) return json(response, 202, { synced: false, message: 'Jogador ainda não possui conta no site.' })
+      user.minecraftUuid = snapshot.uuid
+      user.nick = snapshot.nick
+      user.profile = { ...user.profile, online: Boolean(snapshot.online), lastLoginAt: snapshot.lastLoginAt ?? user.profile.lastLoginAt, lastLogoutAt: snapshot.lastLogoutAt ?? user.profile.lastLogoutAt, lastLocation: snapshot.lastLocation ?? user.profile.lastLocation, level: Number.isFinite(snapshot.level) ? snapshot.level : user.profile.level, experience: Number.isFinite(snapshot.experience) ? snapshot.experience : user.profile.experience, experienceNextLevel: Number.isFinite(snapshot.experienceNextLevel) ? snapshot.experienceNextLevel : user.profile.experienceNextLevel, inventory: Array.isArray(snapshot.inventory) ? snapshot.inventory.slice(0, 36) : user.profile.inventory, homes: Array.isArray(snapshot.homes) ? snapshot.homes.slice(0, 20) : user.profile.homes, money: Number.isFinite(snapshot.money) ? snapshot.money : user.profile.money, vip: typeof snapshot.vip === 'string' ? snapshot.vip : user.profile.vip, claims: Number.isFinite(snapshot.claims) ? snapshot.claims : user.profile.claims }
+      await saveUsers(users)
+      return json(response, 200, { synced: true })
+    }
+    if (request.method === 'GET' && request.url === '/api/plugin/bridge/actions') {
+      if (!bridgeAuthorized(request)) return json(response, 403, { message: 'Bridge não autorizado.' })
+      const actions = (await loadActions()).filter(action => action.status === 'pending').slice(0, 50)
+      return json(response, 200, { actions })
+    }
+    const completedAction = request.url?.match(/^\/api\/plugin\/bridge\/actions\/([a-zA-Z0-9_-]+)\/complete$/)
+    if (request.method === 'POST' && completedAction) {
+      if (!bridgeAuthorized(request)) return json(response, 403, { message: 'Bridge não autorizado.' })
+      const { result = 'executed' } = await bodyFrom(request)
+      const actions = await loadActions(); const action = actions.find(item => item.id === completedAction[1])
+      if (!action) return json(response, 404, { message: 'Ação não encontrada.' })
+      action.status = result === 'executed' ? 'executed' : 'failed'; action.completedAt = new Date().toISOString(); await saveActions(actions)
+      return json(response, 200, { ok: true })
     }
     if (request.method === 'POST' && request.url === '/api/admin/auth/request-code') {
       const { nick, email, password } = await bodyFrom(request)
@@ -176,6 +211,24 @@ createServer(async (request, response) => {
       if (hasAdminCookie) console.warn(`[segurança] Sessão administrativa inválida de ${request.socket.remoteAddress ?? 'origem desconhecida'}`)
       return json(response, 401, { message: 'Sessão inválida.', denied: hasAdminCookie })
     }
+    if (request.method === 'GET' && request.url === '/api/admin/players') {
+      const session = adminSessionFrom(request)
+      if (!session) return json(response, 401, { message: 'Sessão administrativa inválida.' })
+      const users = await loadUsers()
+      return json(response, 200, { players: users.map(adminPlayer), actions: (await loadActions()).filter(action => action.status === 'pending') })
+    }
+    const playerAction = request.url?.match(/^\/api\/admin\/players\/([^/]+)\/actions$/)
+    if (request.method === 'POST' && playerAction) {
+      const session = adminSessionFrom(request)
+      if (!session) return json(response, 401, { message: 'Sessão administrativa inválida.' })
+      const { type, reason = '' } = await bodyFrom(request)
+      if (!['ban', 'kick', 'mute', 'warn'].includes(type)) return json(response, 400, { message: 'Ação inválida.' })
+      const users = await loadUsers(); const user = users.find(item => item.id === decodeURIComponent(playerAction[1]))
+      if (!user) return json(response, 404, { message: 'Jogador não encontrado.' })
+      const action = { id: randomBytes(12).toString('base64url'), playerId: user.id, minecraftUuid: user.minecraftUuid ?? null, nick: user.nick, type, reason: String(reason).slice(0, 240), status: 'pending', requestedBy: session.nick, createdAt: new Date().toISOString() }
+      const actions = await loadActions(); actions.push(action); await saveActions(actions)
+      return json(response, 202, { action })
+    }
     if (request.method === 'GET' && request.url === '/api/player/me') {
       const playerId = sessionFrom(request)
       const users = await loadUsers()
@@ -188,9 +241,11 @@ createServer(async (request, response) => {
     if (request.method === 'POST' && request.url === '/api/admin/auth/logout') {
       return jsonWithCookie(response, 200, { message: 'Sessão encerrada.' }, clearCookie('abyssal_admin'))
     }
+    if (request.method === 'GET' && request.url === '/health') {
+      return json(response, 200, { status: 'ok', uptime: process.uptime() })
+    }
     json(response, 404, { message: 'Rota não encontrada.' })
-  } catch (error) {
-    console.error('[API] Falha ao processar solicitação:', error)
+  } catch {
     json(response, 400, { message: 'Não foi possível processar a solicitação.' })
   }
 }).listen(Number(process.env.PORT || 3001), '0.0.0.0', () => console.log(`API em http://0.0.0.0:${process.env.PORT || 3001}`))
