@@ -23,8 +23,8 @@ O processo usa a porta fornecida pela variável `PORT` da plataforma.
 Diretório da aplicação: `Site/web`
 
 Selecione o ambiente **NodeJS**. O comando de inicialização é `npm start`.
-Ele compila o Vite e serve automaticamente a pasta `dist` pela porta recebida
-da Square Cloud.
+O script instala explicitamente as dependências de build, compila o Vite e
+serve automaticamente a pasta `dist` pela porta recebida da Square Cloud.
 
 O frontend precisa de `VITE_API_URL=https://URL_DA_API` como variável de
 ambiente definida antes do deploy, pois o Vite a incorpora durante o build.

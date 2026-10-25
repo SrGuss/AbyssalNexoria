@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "prestart": "npm run build",
+    "prestart": "npm install --include=dev && npm run build",
     "start": "node server.js"
   },
   "dependencies": {
