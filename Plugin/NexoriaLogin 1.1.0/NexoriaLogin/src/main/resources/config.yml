@@ -1,0 +1,6 @@
+# A URL deve usar HTTPS em produção e não terminar com '/'.
+api-url: "https://seu-dominio.com"
+# Mesma chave configurada como PLUGIN_LOGIN_KEY na API. Nunca versione uma chave real.
+plugin-key: ""
+connect-timeout-seconds: 8
+minimum-password-length: 10

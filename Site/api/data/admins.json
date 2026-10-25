@@ -1,0 +1,16 @@
+[
+  {
+    "id": "admin-a9a0121f0c8001c9",
+    "nick": "teste",
+    "email": "teste@gmail.com",
+    "whatsapp": "5511914983950",
+    "role": "admin",
+    "password": {
+      "algorithm": "pbkdf2-sha256",
+      "iterations": 310000,
+      "salt": "17a8c70b0980975d01b85b53d2d048f2",
+      "hash": "b9103647319721ba12499cf01d5d0d2d96996ed39cbb9c9dab69c5ebd4b64736"
+    },
+    "temporaryPassword": false
+  }
+]

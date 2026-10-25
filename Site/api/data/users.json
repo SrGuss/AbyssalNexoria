@@ -1,0 +1,34 @@
+[
+  {
+    "id": "player-mrpesce",
+    "nick": "MrPesce",
+    "password": {
+      "algorithm": "pbkdf2-sha256",
+      "iterations": 310000,
+      "salt": "b3a6dbb06a1f9b66304aaa14c1fef3bd",
+      "hash": "b7acee5bdcdd48ee01e6edadb81405079a8dda6b840ecdbd53c7b522139a06b2"
+    },
+    "profile": {
+      "level": 42,
+      "experience": 18350,
+      "experienceNextLevel": 25000,
+      "money": 125000,
+      "vip": "Soberano",
+      "vipExpiresAt": "2026-11-24T03:00:00.000Z",
+      "lastLoginAt": "2026-10-24T16:30:00.000Z",
+      "lastLogoutAt": "2026-10-24T18:10:00.000Z",
+      "lastLocation": { "world": "spawn", "x": 128, "y": 72, "z": -46 },
+      "homes": ["Casa", "Mina", "Portal do End"],
+      "inventory": [
+        { "slot": 0, "type": "diamond-sword", "name": "Espada de diamante", "amount": 1 },
+        { "slot": 1, "type": "netherite-pickaxe", "name": "Picareta de netherita", "amount": 1 },
+        { "slot": 4, "type": "ender-pearl", "name": "Pérola do Ender", "amount": 16 },
+        { "slot": 8, "type": "healing-potion", "name": "Poção de cura", "amount": 3 },
+        { "slot": 9, "type": "golden-apple", "name": "Maçã dourada", "amount": 8 },
+        { "slot": 12, "type": "diamond", "name": "Diamante", "amount": 34 },
+        { "slot": 18, "type": "torch", "name": "Tocha", "amount": 64 },
+        { "slot": 22, "type": "ender-chest", "name": "Baú do Ender", "amount": 1 }
+      ]
+    }
+  }
+]
