@@ -1,0 +1,16 @@
+# URL HTTPS da API, sem barra no final.
+api-url: "https://seu-dominio.com"
+# Igual à variável PLUGIN_BRIDGE_KEY da API. Não reutilize a chave do NexoriaLogin.
+bridge-key: ""
+connect-timeout-seconds: 8
+sync-interval-seconds: 60
+action-poll-seconds: 10
+# Sem integração Vault/Essentials/LuckPerms neste primeiro módulo, estes campos
+# ficam vazios/zero e podem ser preenchidos pelos plugins específicos depois.
+default-mute-hours: 24
+# Integrações opcionais detectadas automaticamente quando os plugins existem.
+integrations:
+  vault-economy: true
+  luckperms-primary-group: true
+  cmi-homes: true
+  griefprevention-claims: true

@@ -35,13 +35,6 @@ e-mail transacional antes de habilitar o painel.
 Para deploy, configure `PORT` (a Square Cloud fornece esse valor), `WEB_ORIGIN`
 com a URL pública do frontend e todas as variáveis `OWNER_*`/`PLUGIN_LOGIN_KEY`.
 
-## Diagnóstico público
-
-Após publicar a aplicação, a URL pública da Square Cloud deve responder em
-`/health`, `/api/health` ou `/`. Se não houver uma linha `[HTTP] GET /health`
-nos logs ao abrir a URL, o domínio/subdomínio não está apontando para esta
-aplicação; revise **Publicação na Web** e o subdomínio no painel.
-
 ## Próximas responsabilidades
 
 Responsabilidades planejadas:

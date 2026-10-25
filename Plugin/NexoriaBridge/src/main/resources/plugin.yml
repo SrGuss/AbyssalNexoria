@@ -1,0 +1,7 @@
+name: NexoriaBridge
+version: 0.1.0
+main: com.abyssalnexoria.bridge.NexoriaBridgePlugin
+api-version: '1.21'
+author: Abyssal Nexoria
+description: Sincroniza perfis do Minecraft e ações administrativas com o site.
+softdepend: [Vault, LuckPerms, CMI, GriefPrevention]
