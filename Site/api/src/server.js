@@ -82,6 +82,7 @@ function adminSessionFrom(request) { const auth = request.headers.authorization;
 
 createServer(async (request, response) => {
   try {
+    console.log(`[HTTP] ${request.method} ${request.url}`)
     if (request.method === 'OPTIONS') {
       response.writeHead(204, { 'Access-Control-Allow-Origin': process.env.WEB_ORIGIN || '*', 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Nexoria-Plugin-Key', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS' })
       return response.end()
@@ -188,7 +189,8 @@ createServer(async (request, response) => {
       return jsonWithCookie(response, 200, { message: 'Sessão encerrada.' }, clearCookie('abyssal_admin'))
     }
     json(response, 404, { message: 'Rota não encontrada.' })
-  } catch {
+  } catch (error) {
+    console.error('[API] Falha ao processar solicitação:', error)
     json(response, 400, { message: 'Não foi possível processar a solicitação.' })
   }
 }).listen(Number(process.env.PORT || 3001), '0.0.0.0', () => console.log(`API em http://0.0.0.0:${process.env.PORT || 3001}`))
