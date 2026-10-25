@@ -86,6 +86,9 @@ createServer(async (request, response) => {
       response.writeHead(204, { 'Access-Control-Allow-Origin': process.env.WEB_ORIGIN || '*', 'Access-Control-Allow-Credentials': 'true', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Nexoria-Plugin-Key', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS' })
       return response.end()
     }
+    if (request.method === 'GET' && request.url === '/health') {
+      return json(response, 200, { ok: true, service: 'abyssal-nexoria-api', timestamp: new Date().toISOString() })
+    }
     if (request.method === 'POST' && request.url === '/api/auth/login') {
       const { nick, password } = await bodyFrom(request)
       const users = await loadUsers()
